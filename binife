@@ -1,0 +1,156 @@
+#!/bin/bash
+# binife - BASH INI file parser
+# by Vladimir Kudrya
+# https://github.com/Vladimir-csp/
+#
+# This script is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version. See <http://www.gnu.org/licenses/>.
+
+# binife can currently read, write/add, remove single value.
+
+showhelp(){
+	echo "Usage:
+        $(basename "$0") get inifile section key
+        $(basename "$0") set inifile section key value
+        $(basename "$0") del inifile section key
+
+Example:
+	$(basename "$0") set .config/myapp.conf behavior killallhumans true
+
+All arguments are mandatory.
+Section may be empty (use empty quotes as argument).
+Quotes are stripped on 'get' action if present.
+
+INI Format handling specifics:
+	Sections are enclosed in '[]'.
+	Empty section are written as absense of section.
+	Keys and values are delimited with '='.
+	Leading and trailing whitespaces around keys and values are discarded.
+	Whitespaces inside keys and values are preserved even if unquoted.
+	Values containing spaces are written quoted.
+	Keys containing spaces are written unquoted.
+	Only first of uplicated keys in section is read.
+	"
+
+}
+
+trimspaces(){
+	local TRIMVAR=$@
+	TRIMVAR="$(echo "$TRIMVAR" | sed 's/^[[:space:]]*\|[[:space:]]*$//g')"
+	echo -n "$TRIMVAR"
+}
+
+trimsection(){
+	local TRIMVAR=$@
+	TRIMVAR="$(echo "$TRIMVAR" | sed 's/^\[[[:space:]]*\|[[:space:]]*\]$//g')"
+	echo -n "$TRIMVAR"
+}
+
+trimquotes(){
+	local TRIMVAR=$@
+	TRIMVAR="$(echo "$TRIMVAR" | sed 's/^["'\'']\|["'\'']$//g')"
+	echo -n "$TRIMVAR"
+}
+
+checkargs(){
+	echo "$ACTION" | grep -qi 'help\|\-h' && { showhelp ; exit 0 ; }
+
+	[ "$ACTION" = "get" -o "$ACTION" = "del" -o "$ACTION" = "set" ] || {  echo "Bad action \"$ACTION\"" >&2 ; BADARGS=1; }
+	[ ! -r "$INIFILE" ] && { echo "Can not read \"$INIFILE\"" >&2 ; BADARGS=1; }
+	[ -z "$KEYARG" ] && {  echo "Bad key argument \"$KEYARG\"" >&2 ; BADARGS=1; }
+	[ "$ACTION" = "set" ] && [ -z "$VALUEARG" ] && {  echo "Missing value argument \"$KEYARG\"" >&2 ; BADARGS=1; }
+	[ "$BADARGS" = 1 ] && { showhelp ; exit 1; }
+}
+
+debugecho(){
+	if [ "$SDEBUG" = "1" ] ; then
+		echo "$1" >&2
+	fi
+	true
+}
+
+readvalue(){
+	echo "$RAWDATA" | while IFS='' read LINE
+	do
+		# trim spaces around data
+		LINE="$(trimspaces "$LINE")"
+		# ignore comments
+		echo "$LINE" | grep -q '^;\|^#' && continue
+
+		# get section
+		echo "$LINE" | grep -q '^\[' && echo "$LINE" | grep -q '\]$' && SECTION="$(trimsection "$LINE")" && continue
+
+		echo "$LINE" | grep -q '=' || continue
+
+		# get key and value
+		KEY="$(trimspaces "$(echo "$LINE" | grep -o '^[^=]*')")"
+		VALUE="$(trimquotes "$(trimspaces "$(echo "$LINE" | cut -d '=' -f 2-)")")"
+
+		# echo value on get action
+		[ "$SECTION" = "$SECTIONARG" ] && [ "$KEY" = "$KEYARG" ] && echo "$VALUE" && break
+	done
+}
+
+writevalue(){
+	# enclose value in quotes if it contains whitespace
+	echo "$VALUEARG" | grep -q '[[:space:]]' && VALUEARG="\"$VALUEARG\""
+
+	local REPLACED=false
+
+	echo "$RAWDATA" | {
+	while IFS='' read LINE
+	do
+		# trim spaces around data, keep raw line intact
+		DATA="$(trimspaces "$LINE")"
+
+		# just echo line if comment
+		echo "$DATA" | grep -q '^;\|^#' && { echo "$LINE" ; continue ; }
+
+		# get section and echo it, insert value if leaving right section without key found
+		if echo "$DATA" | grep -q '^\[' && echo "$DATA" | grep -q '\]$'
+		then
+			[ "$ACTION" = "set" ] && [ "$SECTION" = "$SECTIONARG" ] && [ "$REPLACED" != "true" ] && { echo "$KEYARG=$VALUEARG" ; REPLACED=true ; }
+			SECTION="$(trimsection "$DATA")"
+			echo "$LINE"
+			continue
+		fi
+
+		# echo bad line
+		echo "$DATA" | grep -q '=' || { echo "$LINE" ; continue ; }
+
+		# get key and value
+		KEY="$(trimspaces "$(echo "$DATA" | grep -o '^[^=]*')")"
+		VALUE="$(trimspaces "$(echo "$DATA" | cut -d '=' -f 2-)")"
+
+		# echo changed value or just echo line
+		if [ "$SECTION" = "$SECTIONARG" ] && [ "$KEY" = "$KEYARG" ] && [ "$REPLACED" != "true" ]
+		then
+			[ "$ACTION" = "set" ] && echo "$LINE" | sed "s/^\([[:space:]]*$KEY[[:space:]]*=[[:space:]]*\)$VALUE\([[:space:]]*\)*$/\1$VALUEARG\2/"
+			[ "$ACTION" = "del" ] && true
+			REPLACED=true
+		else
+			echo "$LINE"
+		fi
+	done 
+	# add section and key if not found iside cycle
+	[  "$ACTION" = "set" ] && [ "$REPLACED" != "true" ] && { [ -n "$SECTIONARG" ] && echo -e "[$SECTIONARG]\n$KEYARG=$VALUEARG" ; [ -z "$SECTIONARG" ] && echo -e "$KEYARG=$VALUEARG" ; }
+	}
+}
+
+
+ACTION="$1"
+INIFILE="$2"
+SECTIONARG="$3"
+KEYARG="$4"
+VALUEARG="$5"
+
+checkargs
+
+RAWDATA="$(cat "$INIFILE")"
+#insert linefeed if file was empty
+[ -z "$RAWDATA" ] && RAWDATA="$(echo -e '\n')"
+
+[ "$ACTION" = "get" ] && readvalue
+[ "$ACTION" = "set" -o "$ACTION" = "del" ] && writevalue > "$INIFILE"
