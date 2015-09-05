@@ -36,25 +36,25 @@ INI Format handling specifics:
 
 }
 
-trimspaces(){
+trim_spaces(){
 	local TRIMVAR=$@
 	TRIMVAR="$(echo "$TRIMVAR" | sed 's/^[[:space:]]*\|[[:space:]]*$//g')"
 	echo -n "$TRIMVAR"
 }
 
-trimsection(){
+trim_section(){
 	local TRIMVAR=$@
 	TRIMVAR="$(echo "$TRIMVAR" | sed 's/^\[[[:space:]]*\|[[:space:]]*\]$//g')"
 	echo -n "$TRIMVAR"
 }
 
-trimquotes(){
+trim_quotes(){
 	local TRIMVAR=$@
 	TRIMVAR="$(echo "$TRIMVAR" | sed 's/^["'\'']\|["'\'']$//g')"
 	echo -n "$TRIMVAR"
 }
 
-checkargs(){
+check_args(){
 	echo "$ACTION" | grep -qi 'help\|\-h' && { showhelp ; exit 0 ; }
 
 	[ "$ACTION" = "get" -o "$ACTION" = "del" -o "$ACTION" = "set" ] || {  echo "Bad action \"$ACTION\"" >&2 ; BADARGS=1; }
@@ -64,36 +64,36 @@ checkargs(){
 	[ "$BADARGS" = 1 ] && { showhelp ; exit 1; }
 }
 
-debugecho(){
+debug_echo(){
 	if [ "$SDEBUG" = "1" ] ; then
 		echo "$1" >&2
 	fi
 	true
 }
 
-readvalue(){
+read_value(){
 	echo "$RAWDATA" | while IFS='' read LINE
 	do
 		# trim spaces around data
-		LINE="$(trimspaces "$LINE")"
+		LINE="$(trim_spaces "$LINE")"
 		# ignore comments
 		echo "$LINE" | grep -q '^;\|^#' && continue
 
 		# get section
-		echo "$LINE" | grep -q '^\[' && echo "$LINE" | grep -q '\]$' && SECTION="$(trimsection "$LINE")" && continue
+		echo "$LINE" | grep -q '^\[' && echo "$LINE" | grep -q '\]$' && SECTION="$(trim_section "$LINE")" && continue
 
 		echo "$LINE" | grep -q '=' || continue
 
 		# get key and value
-		KEY="$(trimspaces "$(echo "$LINE" | grep -o '^[^=]*')")"
-		VALUE="$(trimquotes "$(trimspaces "$(echo "$LINE" | cut -d '=' -f 2-)")")"
+		KEY="$(trim_spaces "$(echo "$LINE" | grep -o '^[^=]*')")"
+		VALUE="$(trim_quotes "$(trim_spaces "$(echo "$LINE" | cut -d '=' -f 2-)")")"
 
 		# echo value on get action
 		[ "$SECTION" = "$SECTIONARG" ] && [ "$KEY" = "$KEYARG" ] && echo "$VALUE" && break
 	done
 }
 
-writevalue(){
+write_value(){
 	# enclose value in quotes if it contains whitespace
 	echo "$VALUEARG" | grep -q '[[:space:]]' && VALUEARG="\"$VALUEARG\""
 
@@ -103,7 +103,7 @@ writevalue(){
 	while IFS='' read LINE
 	do
 		# trim spaces around data, keep raw line intact
-		DATA="$(trimspaces "$LINE")"
+		DATA="$(trim_spaces "$LINE")"
 
 		# just echo line if comment
 		echo "$DATA" | grep -q '^;\|^#' && { echo "$LINE" ; continue ; }
@@ -112,7 +112,7 @@ writevalue(){
 		if echo "$DATA" | grep -q '^\[' && echo "$DATA" | grep -q '\]$'
 		then
 			[ "$ACTION" = "set" ] && [ "$SECTION" = "$SECTIONARG" ] && [ "$REPLACED" != "true" ] && { echo "$KEYARG=$VALUEARG" ; REPLACED=true ; }
-			SECTION="$(trimsection "$DATA")"
+			SECTION="$(trim_section "$DATA")"
 			echo "$LINE"
 			continue
 		fi
@@ -121,8 +121,8 @@ writevalue(){
 		echo "$DATA" | grep -q '=' || { echo "$LINE" ; continue ; }
 
 		# get key and value
-		KEY="$(trimspaces "$(echo "$DATA" | grep -o '^[^=]*')")"
-		VALUE="$(trimspaces "$(echo "$DATA" | cut -d '=' -f 2-)")"
+		KEY="$(trim_spaces "$(echo "$DATA" | grep -o '^[^=]*')")"
+		VALUE="$(trim_spaces "$(echo "$DATA" | cut -d '=' -f 2-)")"
 
 		# echo changed value or just echo line
 		if [ "$SECTION" = "$SECTIONARG" ] && [ "$KEY" = "$KEYARG" ] && [ "$REPLACED" != "true" ]
@@ -146,11 +146,11 @@ SECTIONARG="$3"
 KEYARG="$4"
 VALUEARG="$5"
 
-checkargs
+check_args
 
 RAWDATA="$(cat "$INIFILE")"
 #insert linefeed if file was empty
 [ -z "$RAWDATA" ] && RAWDATA="$(echo -e '\n')"
 
-[ "$ACTION" = "get" ] && readvalue
-[ "$ACTION" = "set" -o "$ACTION" = "del" ] && writevalue > "$INIFILE"
+[ "$ACTION" = "get" ] && read_value
+[ "$ACTION" = "set" -o "$ACTION" = "del" ] && write_value > "$INIFILE"
