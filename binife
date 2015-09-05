@@ -25,7 +25,7 @@ Quotes are stripped on 'get' action if present.
 
 INI Format handling specifics:
 	Sections are enclosed in '[]'.
-	Empty section are written as absense of section.
+	Empty sections are written as absense of section.
 	Keys and values are delimited with '='.
 	Leading and trailing whitespaces around keys and values are discarded.
 	Whitespaces inside keys and values are preserved even if unquoted.
