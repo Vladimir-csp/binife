@@ -11,15 +11,15 @@
 # binife can currently read, write/add, remove single value.
 
 show_help(){
-	echo "Usage:
-        $(basename "$0") get inifile section key
-        $(basename "$0") set inifile section key value
-        $(basename "$0") del inifile section key
+	echo  $"Usage:""
+	$(basename "$0") get" $"inifile section key""
+	$(basename "$0") set" $"inifile section key value""
+	$(basename "$0") del" $"inifile section key""
 
-Example:
+"$"Example:""
 	$(basename "$0") set .config/myapp.conf behavior killallhumans true
 
-All arguments are mandatory.
+"$"All arguments are mandatory.
 Section may be empty (use empty quotes as argument).
 Quotes are stripped on 'get' action if present.
 
@@ -33,7 +33,6 @@ INI Format handling specifics:
 	Keys containing spaces are written unquoted.
 	Of any duplicated items, only first is acted upon.
 	"
-
 }
 
 echo_error(){
@@ -261,7 +260,7 @@ ini_del(){
 
 ACTION="$1"
 shift
-echo "$ACTION" | grep -qi 'help\|\-h' && { showhelp ; exit 0 ; }
+echo "$ACTION" | grep -qi 'help\|\-h' && { show_help ; exit 0 ; }
 
 if [ "$ACTION" = "get" ] && [ "$#" = "3" ]
 then
