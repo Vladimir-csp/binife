@@ -131,7 +131,7 @@ ini_get(){
 }
 
 ini_set(){
-	# depends on trim_*, echo_error functions functions
+	# depends on trim_*, echo_error functions
 
 	local INIFILE="$1"
 	local SECTION="$2"
@@ -203,7 +203,7 @@ ini_set(){
 }
 
 ini_del(){
-	# depends on trim_*, echo_error functions functions
+	# depends on trim_*, echo_error functions
 
 	local INIFILE="$1"
 	local SECTION="$2"
