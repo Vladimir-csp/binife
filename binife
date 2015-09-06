@@ -10,7 +10,7 @@
 
 # binife can currently read, write/add, remove single value.
 
-showhelp(){
+show_help(){
 	echo "Usage:
         $(basename "$0") get inifile section key
         $(basename "$0") set inifile section key value
@@ -31,126 +31,249 @@ INI Format handling specifics:
 	Whitespaces inside keys and values are preserved even if unquoted.
 	Values containing spaces are written quoted.
 	Keys containing spaces are written unquoted.
-	Only first of uplicated keys in section is read.
+	Of any duplicated items, only first is acted upon.
 	"
 
 }
 
-trim_spaces(){
+echo_error(){
+	echo "$@" >&2
+}
+
+echo_debug(){
+	[ -n "$DEBUG" ] && [ "$DEBUG" -ge "1" ] >/dev/null 2>/dev/null && echo "$@"
+}
+
+trim_spaces() {
 	local TRIMVAR=$@
-	TRIMVAR="$(echo "$TRIMVAR" | sed 's/^[[:space:]]*\|[[:space:]]*$//g')"
+	TRIMVAR="${TRIMVAR#"${TRIMVAR%%[![:space:]]*}"}"
+	TRIMVAR="${TRIMVAR%"${TRIMVAR##*[![:space:]]}"}"
 	echo -n "$TRIMVAR"
 }
 
-trim_section(){
+trim_quotes() {
 	local TRIMVAR=$@
-	TRIMVAR="$(echo "$TRIMVAR" | sed 's/^\[[[:space:]]*\|[[:space:]]*\]$//g')"
+	TRIMVAR="${TRIMVAR#[\'\"]}"
+	TRIMVAR="${TRIMVAR%[\'\"]}"
 	echo -n "$TRIMVAR"
 }
 
-trim_quotes(){
+
+trim_single_quotes() {
 	local TRIMVAR=$@
-	TRIMVAR="$(echo "$TRIMVAR" | sed 's/^["'\'']\|["'\'']$//g')"
+	TRIMVAR="${TRIMVAR#[\']}"
+	TRIMVAR="${TRIMVAR%[\']}"
 	echo -n "$TRIMVAR"
 }
 
-check_args(){
-	echo "$ACTION" | grep -qi 'help\|\-h' && { showhelp ; exit 0 ; }
-
-	[ "$ACTION" = "get" -o "$ACTION" = "del" -o "$ACTION" = "set" ] || {  echo "Bad action \"$ACTION\"" >&2 ; BADARGS=1; }
-	[ ! -r "$INIFILE" ] && { echo "Can not read \"$INIFILE\"" >&2 ; BADARGS=1; }
-	[ -z "$KEYARG" ] && {  echo "Bad key argument \"$KEYARG\"" >&2 ; BADARGS=1; }
-	[ "$ACTION" = "set" ] && [ -z "$VALUEARG" ] && {  echo "Missing value argument \"$KEYARG\"" >&2 ; BADARGS=1; }
-	[ "$BADARGS" = 1 ] && { showhelp ; exit 1; }
+trim_double_quotes() {
+	local TRIMVAR=$@
+	TRIMVAR="${TRIMVAR#[\"]}"
+	TRIMVAR="${TRIMVAR%[\"]}"
+	echo -n "$TRIMVAR"
 }
 
-debug_echo(){
-	if [ "$SDEBUG" = "1" ] ; then
-		echo "$1" >&2
-	fi
-	true
+trim_all_quotes() {
+	local TRIMVAR=$@
+	TRIMVAR="${TRIMVAR#"${TRIMVAR%%[!\'\"]*}"}"
+	TRIMVAR="${TRIMVAR%"${TRIMVAR##*[!\'\"]}"}"
+	echo -n "$TRIMVAR"
 }
 
-read_value(){
-	echo "$RAWDATA" | while IFS='' read LINE
+trim_square_brackets(){
+	local TRIMVAR=$@
+	TRIMVAR="${TRIMVAR#\[}"
+	TRIMVAR="${TRIMVAR%\]}"
+	echo -n "$TRIMVAR"
+}
+
+ini_get(){
+	# depends on trim_*, echo_error functions
+
+	local INIFILE="$1"
+	local SECTION="$2"
+	local KEY="$3"
+	
+	[ ! -r "$INIFILE" ] && { echo_error $"Can not read file" "\"$INIFILE\"" ; return 1 ; }
+	[ -z "$KEY" ] && { echo_error $"No ini key given as argument 3" ; return 1 ; }
+	cat "$INIFILE" | while IFS='' read LINE
 	do
 		# trim spaces around data
 		LINE="$(trim_spaces "$LINE")"
+		
 		# ignore comments
-		echo "$LINE" | grep -q '^;\|^#' && continue
+		[ "${LINE:0:1}" = ";" -o "${LINE:0:1}" = "#" ] && continue
 
 		# get section
-		echo "$LINE" | grep -q '^\[' && echo "$LINE" | grep -q '\]$' && SECTION="$(trim_section "$LINE")" && continue
+		[ "${LINE:0:1}" = "[" ] && local DATA_SECTION="$(trim_spaces "$(trim_square_brackets "$LINE")")" && continue
 
-		echo "$LINE" | grep -q '=' || continue
+		# ignore line without delimiter
+		[ "$LINE" = "${LINE//=/0}" ] && continue
 
-		# get key and value
-		KEY="$(trim_spaces "$(echo "$LINE" | grep -o '^[^=]*')")"
-		VALUE="$(trim_quotes "$(trim_spaces "$(echo "$LINE" | cut -d '=' -f 2-)")")"
+		# get key
+		local DATA_KEY="$(trim_spaces "${LINE%%=*}")"
 
-		# echo value on get action
-		[ "$SECTION" = "$SECTIONARG" ] && [ "$KEY" = "$KEYARG" ] && echo "$VALUE" && break
+		# if section an key match, get to the data
+		if [ "$DATA_SECTION" = "$SECTION" ] && [ "$DATA_KEY" = "$KEY" ]
+		then
+			# get value
+			local DATA_VALUE="$(trim_spaces "${LINE#*=}")"
+
+			# handle paired quotes
+			if [ "${DATA_VALUE:0:1}" = "'" -o "${DATA_VALUE:0:1}" = "\"" ] && [ "${DATA_VALUE:0:1}" = "${DATA_VALUE:(-1):1}" ]
+			then
+				# unquote
+				local DATA_VALUE="$(trim_quotes "$DATA_VALUE")"
+			fi
+			echo "$DATA_VALUE"
+		fi
 	done
 }
 
-write_value(){
-	# enclose value in quotes if it contains whitespace
-	echo "$VALUEARG" | grep -q '[[:space:]]' && VALUEARG="\"$VALUEARG\""
+ini_set(){
+	# depends on trim_*, echo_error functions functions
+
+	local INIFILE="$1"
+	local SECTION="$2"
+	local KEY="$3"
+	local VALUE="$4"
+
+	# if inifile does not exist, create with newline
+	[ ! -e "$INIFILE" ] && { echo_error > "$INIFILE" || echo $"Can not create file" \"$INIFILE\" ; return 1 ; }
+	
+	# can we read/write the file?
+	[ ! -r "$INIFILE" ] && { echo_error $"Can not read file" "\"$INIFILE\"" ; return 1 ; }
+	[ ! -w "$INIFILE" ] && { echo_error $"Can not write to file" "\"$INIFILE\"" ; return 1 ; }
+
+	[ -z "$KEY" ] && { echo_error $"No ini key given as argument 3" ; return 1 ; }
+
+	# if value contains whitespaces and is unquoted, quote it
+	if [ "$VALUE" != "${VALUE//[[:space:]]/0}" ]
+	then
+		[ "${VALUE:0:1}" = "'" -o "${VALUE:0:1}" = "\"" ] && [ "${VALUE:0:1}" = "${VALUE:(-1):1}" ] || local VALUE="\"$VALUE\""
+	fi
 
 	local REPLACED=false
 
-	echo "$RAWDATA" | {
-	while IFS='' read LINE
-	do
-		# trim spaces around data, keep raw line intact
-		DATA="$(trim_spaces "$LINE")"
-
-		# just echo line if comment
-		echo "$DATA" | grep -q '^;\|^#' && { echo "$LINE" ; continue ; }
-
-		# get section and echo it, insert value if leaving right section without key found
-		if echo "$DATA" | grep -q '^\[' && echo "$DATA" | grep -q '\]$'
+	local DATA="$(cat "$INIFILE")"
+	echo "$DATA" | {
+		while IFS='' read ORIG_LINE
+		do
+			# trim spaces around data, keep raw line intact
+			local LINE="$(trim_spaces "$ORIG_LINE")"
+	
+			# just echo line if comment
+			[ "${LINE:0:1}" = ";" -o "${LINE:0:1}" = "#" ] && { echo "$ORIG_LINE" ; continue ; }
+	
+			# if line is a section
+			if [ "${LINE:0:1}" = "[" ] && [ "${LINE:(-1):1}" = "]" ]
+			then
+				# if in previous section there were no matches, add value now
+				[ "$DATA_SECTION" = "$SECTION" ] && [ "$REPLACED" != "true" ] && { echo "$KEY=$VALUE" ; REPLACED=true ; }
+				# get section
+				local DATA_SECTION="$(trim_spaces "$(trim_square_brackets "$LINE")")"
+				# return section line
+				echo "$ORIG_LINE"
+				continue
+			fi
+	
+			# just echo line without delimiter
+			[ "$LINE" = "${LINE//=/0}" ] && { echo "$ORIG_LINE" ; continue ; }
+	
+			# get key
+			local DATA_KEY="$(trim_spaces "${LINE%%=*}")"
+	
+			# if section and key match and no replacemet took place,
+			# echo original line with updated value (saving anything we can, but old value), otherwise echo original line
+			if [ "$DATA_SECTION" = "$SECTION" ] && [ "$DATA_KEY" = "$KEY" ] &&  [ "$REPLACED" != "true" ]
+			then
+				echo "${ORIG_LINE%%=*}=$VALUE"
+				local REPLACED=true
+			else
+				echo "${ORIG_LINE}"
+			fi
+		done 
+		# add section and key if not found inside above cycle
+		if [ "$REPLACED" != "true" ]
 		then
-			[ "$ACTION" = "set" ] && [ "$SECTION" = "$SECTIONARG" ] && [ "$REPLACED" != "true" ] && { echo "$KEYARG=$VALUEARG" ; REPLACED=true ; }
-			SECTION="$(trim_section "$DATA")"
-			echo "$LINE"
-			continue
+			[ -n "$SECTION" ] && [ "$DATA_SECTION" != "$SECTION" ] && echo "[$SECTION]"
+			echo -e "$KEY=$VALUE"
 		fi
-
-		# echo bad line
-		echo "$DATA" | grep -q '=' || { echo "$LINE" ; continue ; }
-
-		# get key and value
-		KEY="$(trim_spaces "$(echo "$DATA" | grep -o '^[^=]*')")"
-		VALUE="$(trim_spaces "$(echo "$DATA" | cut -d '=' -f 2-)")"
-
-		# echo changed value or just echo line
-		if [ "$SECTION" = "$SECTIONARG" ] && [ "$KEY" = "$KEYARG" ] && [ "$REPLACED" != "true" ]
-		then
-			[ "$ACTION" = "set" ] && echo "$LINE" | sed "s/^\([[:space:]]*$KEY[[:space:]]*=[[:space:]]*\)$VALUE\([[:space:]]*\)*$/\1$VALUEARG\2/"
-			[ "$ACTION" = "del" ] && true
-			REPLACED=true
-		else
-			echo "$LINE"
-		fi
-	done 
-	# add section and key if not found iside cycle
-	[  "$ACTION" = "set" ] && [ "$REPLACED" != "true" ] && { [ -n "$SECTIONARG" ] && echo -e "[$SECTIONARG]\n$KEYARG=$VALUEARG" ; [ -z "$SECTIONARG" ] && echo -e "$KEYARG=$VALUEARG" ; }
-	}
+	} > "$INIFILE"
 }
 
+ini_del(){
+	# depends on trim_*, echo_error functions functions
+
+	local INIFILE="$1"
+	local SECTION="$2"
+	local KEY="$3"
+
+	# if inifile does not exist do nothing
+	[ ! -e "$INIFILE" ] && { echo_error $"File does not exist:" \"$INIFILE\" ; return 1 ; }
+	
+	# can we read/write the file?
+	[ ! -r "$INIFILE" ] && { echo_error $"Can not read file" "\"$INIFILE\"" ; return 1 ; }
+	[ ! -w "$INIFILE" ] && { echo_error $"Can not write to file" "\"$INIFILE\"" ; return 1 ; }
+
+	[ -z "$KEY" ] && { echo_error $"No ini key given as argument 3" ; return 1 ; }
+
+	local REMOVED=false
+
+	local DATA="$(cat "$INIFILE")"
+	echo "$DATA" | {
+		while IFS='' read ORIG_LINE
+		do
+			# trim spaces around data, keep raw line intact
+			local LINE="$(trim_spaces "$ORIG_LINE")"
+	
+			# just echo line if comment
+			[ "${LINE:0:1}" = ";" -o "${LINE:0:1}" = "#" ] && { echo "$ORIG_LINE" ; continue ; }
+	
+			# if line is a section
+			if [ "${LINE:0:1}" = "[" ] && [ "${LINE:(-1):1}" = "]" ]
+			then
+				# get section
+				local DATA_SECTION="$(trim_spaces "$(trim_square_brackets "$LINE")")"
+				# return section line
+				echo "$ORIG_LINE"
+				continue
+			fi
+	
+			# just echo line without delimiter
+			[ "$LINE" = "${LINE//=/0}" ] && { echo "$ORIG_LINE" ; continue ; }
+	
+			# get key
+			local DATA_KEY="$(trim_spaces "${LINE%%=*}")"
+	
+			# if section and key match and nothing got removed so far, do not return line
+			# echo original line with updated value (saving anything we can, but old value), otherwise echo original line
+			if [ "$DATA_SECTION" = "$SECTION" ] && [ "$DATA_KEY" = "$KEY" ] &&  [ "$REMOVED" != "true" ]
+			then
+				local REMOVED=true
+				true
+			else
+				echo "${ORIG_LINE}"
+			fi
+		done 
+	} > "$INIFILE"
+}
 
 ACTION="$1"
-INIFILE="$2"
-SECTIONARG="$3"
-KEYARG="$4"
-VALUEARG="$5"
+shift
+echo "$ACTION" | grep -qi 'help\|\-h' && { showhelp ; exit 0 ; }
 
-check_args
-
-RAWDATA="$(cat "$INIFILE")"
-#insert linefeed if file was empty
-[ -z "$RAWDATA" ] && RAWDATA="$(echo -e '\n')"
-
-[ "$ACTION" = "get" ] && read_value
-[ "$ACTION" = "set" -o "$ACTION" = "del" ] && write_value > "$INIFILE"
+if [ "$ACTION" = "get" ] && [ "$#" = "3" ]
+then
+	ini_get "$@"
+elif [ "$ACTION" = "set" ] && [ "$#" = "4" ]
+then
+	ini_set "$@"
+elif [ "$ACTION" = "del" ] && [ "$#" = "3" ]
+then
+	ini_del "$@"
+else
+	echo_error "Wrong arguments for action $ACTION"
+	show_help >&2
+	exit 1
+fi
