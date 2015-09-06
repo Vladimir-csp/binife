@@ -123,6 +123,13 @@ ini_get(){
 			then
 				# unquote
 				local DATA_VALUE="$(trim_quotes "$DATA_VALUE")"
+			else
+				#shrink whitespaces if value is unquoted
+				local DATA_VALUE="${DATA_VALUE//[[:space:]]/ }"
+				until [ "$DATA_VALUE" = "${DATA_VALUE//  / }" ]
+				do
+					local DATA_VALUE="${DATA_VALUE//  / }"
+				done
 			fi
 			echo "$DATA_VALUE"
 		fi
